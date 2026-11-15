@@ -1,0 +1,8 @@
+/* Everything the LearnEV renderer needs, plus the row chrome. build.mjs rewrites
+   :root to .lgoui-root so the library's tokens stay inside the view. */
+@import "../../../src/openui/components/theme.css";
+@import "../../../src/openui/components/components.css";
+@import "../../../src/openui/components/map/map.css";
+@import "katex/dist/katex.min.css";
+@import "maplibre-gl/dist/maplibre-gl.css";
+@import "./view.css";

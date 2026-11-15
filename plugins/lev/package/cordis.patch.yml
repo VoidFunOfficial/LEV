@@ -1,0 +1,5 @@
+# LEV, LearnEV's OpenUI views: the lev skill, the openui_check tool and the view for openui fences in replies.
+- insert:
+    - id: learnev-lev
+      name: '@learnev/lev'
+      config: {}

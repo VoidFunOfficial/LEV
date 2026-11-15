@@ -1,0 +1,4 @@
+root = Col([title, intro, chart])
+title = Title("渲染自检 Render check 123", "lg")
+intro = Text("看到这段中文和下面的柱状图，说明构建和渲染都正常。", "md", "muted")
+chart = Chart("bar", [{"科目": "数学", "分数": 92}, {"科目": "语文", "分数": 88}, {"科目": "英语", "分数": 95}], "科目", ["分数"], "number", null, false, 200)

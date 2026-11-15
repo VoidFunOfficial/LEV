@@ -1,0 +1,282 @@
+name: Release
+
+# Push a tag v<version> (matching package.json) to build every platform and publish a GitHub Release.
+# Run it by hand to build the same archives as workflow artifacts without publishing.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  LEARNEV_CHROME_NO_SANDBOX: "1"
+
+jobs:
+  package:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64, os: ubuntu-24.04 }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+          - { target: macos-arm64, os: macos-15 }
+          - { target: macos-x64, os: macos-15-intel }
+          - { target: windows-x64, os: windows-2025 }
+          - { target: windows-arm64, os: windows-11-arm }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Check the tag matches package.json
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version (expected v$version)."
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # The archive smoke test renders a page; Linux arm64 runners ship no Chrome.
+      - name: Make sure a browser is available
+        if: runner.os != 'Windows'
+        run: |
+          found=$(node --experimental-strip-types --no-warnings -e 'import("./src/server/render/chrome.ts").then((m) => console.log(m.findChrome() ?? ""))')
+          if [ -z "$found" ]; then npx --yes playwright install --with-deps chromium-headless-shell; fi
+
+      - name: Package
+        run: .github/scripts/package.sh ${{ matrix.target }}
+
+      - name: Smoke test the archive
+        run: |
+          archive=$(ls dist/release/learnev-*)
+          rm -rf dist/check && mkdir -p dist/check
+          case "$archive" in
+            *.zip)
+              zip=$(basename "$archive")
+              if command -v 7z >/dev/null 2>&1; then (cd dist/check && 7z x "../release/$zip" >/dev/null)
+              else (cd dist/check && pwsh -NoProfile -Command "Expand-Archive -Path '../release/$zip' -DestinationPath .")
+              fi
+              ;;
+            *) tar -xzf "$archive" -C dist/check ;;
+          esac
+          dir=$(ls -d dist/check/learnev-*)
+          if [ "$RUNNER_OS" = Windows ]; then
+            .github/scripts/smoke.sh "$dir"
+          else
+            .github/scripts/smoke.sh "$dir" --render "$PWD/dist/check/smoke-${{ matrix.target }}.png"
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: learnev-${{ matrix.target }}
+          path: dist/release/learnev-*
+          if-no-files-found: error
+          compression-level: 0
+
+  plugin:
+    name: LEV plugin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      # Unversioned copies give INSTALL.md stable releases/latest/download links.
+      - name: Pack
+        run: |
+          npm run pack:lev
+          cp dist/lev-skill-*.zip dist/lev-skill.zip
+          cp dist/learnev-lev-*.tgz dist/learnev-lev.tgz
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lev
+          path: |
+            dist/*.tgz
+            dist/*.zip
+          if-no-files-found: error
+
+  # Signing is optional. Without ANDROID_KEYSTORE_BASE64 the APK is signed with the runner's debug
+  # key (installs, but cannot update a build signed with another key). Secrets:
+  # ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD.
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install the Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Prepare the app
+        run: npm run android:prepare
+
+      - name: Smoke test the mobile runtime
+        run: node mobile/smoke.mjs
+
+      - name: Use the release keystore
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "LEARNEV_ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build the APK
+        env:
+          LEARNEV_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          LEARNEV_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          LEARNEV_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          (cd mobile/android && ./gradlew --no-daemon :app:assembleRelease)
+          version=$(node -p 'require("./package.json").version')
+          mkdir -p dist/release
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk "dist/release/learnev-$version-android.apk"
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          "$apksigner" verify --print-certs "dist/release/learnev-$version-android.apk" | sed -n 1p
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: learnev-android
+          path: dist/release/learnev-*-android.apk
+          if-no-files-found: error
+          compression-level: 0
+
+  # Without signing secrets this publishes learnev-<version>-ios-unsigned.ipa, which has to be
+  # signed before it installs (for example with AltStore or Sideloadly). With IOS_CERTIFICATE_P12_BASE64,
+  # IOS_CERTIFICATE_PASSWORD, IOS_PROVISIONING_PROFILE_BASE64 and IOS_TEAM_ID it exports a signed
+  # learnev-<version>-ios.ipa. Repository variables IOS_BUNDLE_ID (default app.learnev.ios) and
+  # IOS_EXPORT_METHOD (default release-testing, i.e. ad hoc) must match the profile.
+  ios:
+    name: iOS
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+      LEARNEV_IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+      LEARNEV_IOS_EXPORT_METHOD: ${{ vars.IOS_EXPORT_METHOD }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Prepare the app
+        run: npm run ios:prepare
+
+      - name: Smoke test the mobile runtime
+        run: node mobile/smoke.mjs
+
+      - name: Import the signing certificate and profile
+        if: env.IOS_CERTIFICATE_P12_BASE64 != ''
+        env:
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_TEAM_ID: ${{ secrets.IOS_TEAM_ID }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password=$(openssl rand -hex 16)
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          echo "$IOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -k "$password" "$keychain" >/dev/null
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          profile="$RUNNER_TEMP/profile.mobileprovision"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$profile"
+          security cms -D -i "$profile" > "$RUNNER_TEMP/profile.plist"
+          uuid=$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/profile.plist")
+          for dir in "$HOME/Library/MobileDevice/Provisioning Profiles" "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"; do
+            mkdir -p "$dir" && cp "$profile" "$dir/$uuid.mobileprovision"
+          done
+          { echo "LEARNEV_IOS_PROFILE=$uuid"; echo "LEARNEV_IOS_TEAM_ID=$IOS_TEAM_ID"; } >> "$GITHUB_ENV"
+
+      - name: Build the IPA
+        run: sh mobile/ios/build.sh
+
+      - name: Remove the signing keychain
+        if: always() && env.IOS_CERTIFICATE_P12_BASE64 != ''
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: learnev-ios
+          path: dist/release/learnev-*-ios*.ipa
+          if-no-files-found: error
+          compression-level: 0
+  publish:
+    name: Publish release
+    if: github.ref_type == 'tag'
+    needs: [package, plugin, android, ios]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: assets
+          merge-multiple: true
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -lh assets
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" assets/* --repo "$GITHUB_REPOSITORY" --title "LearnEV $GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi

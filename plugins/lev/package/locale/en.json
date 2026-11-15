@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "LEV",
+    "description": "Shows LearnEV's OpenUI views right inside the chat, built from the same components as the LearnEV chat and fully interactive: knowledge cards, draggable formula demos, flashcards, quizzes, calculators, charts, diagrams and study reports. The assistant writes the program in an openui code block in its reply, and the chat shows that block as the live view, so it stays visible after the turn's tool calls fold away. Adds the lev skill (type /lev, or just ask for an OpenUI view) and the openui_check tool, which checks a program with LearnEV's parser before it is shown. Buttons that ask the assistant send a new message in the same chat. Photo search and maps need internet access to Wikipedia and OpenFreeMap. Install the packed learnev-lev tarball, or build it with npm run pack:lev in the LearnEV repository. Turning the plugin off removes the skill, the tool and the view."
+  }
+}

@@ -1,0 +1,159 @@
+// Builds the self-contained lev package from the LearnEV sources in this repository
+// into <repo>/dist/lev; it needs neither this repository nor a build step once copied:
+//   skills/lev/                  the standalone skill any agent can load
+//     SKILL.md, references/      instructions, the language reference and the teaching guide
+//     scripts/check.mjs          command-line checker, on top of scripts/validate.js
+//     scripts/validate.js        the OpenUI parser with LearnEV's problem wording
+//   index.js, dist/client.js     the DeepSeek Harness plugin: the skill, the openui_check tool, and
+//                                the live view for openui fences (LearnEV's renderer, styles and fonts)
+// With --pack it also writes <repo>/dist/learnev-lev-<version>.tgz (a DSH-installable
+// package) and <repo>/dist/lev-skill-<version>.zip (the skill folder alone).
+import { build } from "esbuild";
+import { execFileSync } from "node:child_process";
+import { copyFile, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const repo = join(here, "../..");
+const outRoot = join(repo, "dist");
+const out = join(outRoot, "lev");
+const skill = join(out, "skills/lev");
+const pkg = JSON.parse(await readFile(join(here, "package/package.json"), "utf8"));
+const dev = process.argv.includes("--dev");
+const pack = process.argv.includes("--pack");
+
+// The browser module table of the DSH page supplies these; a second React would break hooks.
+const PAGE_MODULES = ["react", "react/jsx-runtime", "react-dom", "react-dom/client"];
+const env = {
+  "process.env.NODE_ENV": '"production"',
+  "process.env.NEXT_PUBLIC_BASE_PATH": "undefined",
+  "process.env.NEXT_PUBLIC_OPENUI_DEVTOOLS": '""',
+};
+const common = { bundle: true, write: false, logLevel: "warning", target: "es2022", jsx: "automatic", define: env, absWorkingDir: repo };
+
+/**
+ * Two LearnEV files assume they run inside the Next app. In DSH there is no LearnEV
+ * server, and no bundler-emitted worker asset, so build.mjs swaps those two spots:
+ * photo and street-route lookups call the public APIs from the browser (src/api-shim.ts),
+ * and MapLibre's worker runs from a Blob URL built from the inlined worker source.
+ */
+const sourcePatches = [
+  {
+    file: /[\\/]src[\\/]openui[\\/]components[\\/](media\.tsx|map[\\/]use-street-route\.ts)$/,
+    from: /\bfetch\(/g,
+    to: "__learnevApiFetch(",
+    prelude: `import { apiFetch as __learnevApiFetch } from ${JSON.stringify(join(here, "src/api-shim.ts"))};`,
+  },
+  {
+    file: /[\\/]src[\\/]openui[\\/]components[\\/]map[\\/]basemap\.ts$/,
+    from: /new URL\("maplibre-gl\/dist\/maplibre-gl-worker\.mjs", import\.meta\.url\)\.toString\(\)/g,
+    to: "__learnevMapWorkerUrl()",
+    prelude: `import { mapWorkerUrl as __learnevMapWorkerUrl } from ${JSON.stringify(join(here, "src/map-worker.ts"))};`,
+  },
+];
+const patchSources = {
+  name: "learnev-source-patches",
+  setup(b) {
+    for (const patch of sourcePatches) {
+      b.onLoad({ filter: patch.file }, async (args) => {
+        const source = await readFile(args.path, "utf8");
+        const patched = source.replace(patch.from, patch.to);
+        if (patched === source) throw new Error(`${args.path} no longer matches ${patch.from}; update sourcePatches in build.mjs`);
+        return { contents: `${patch.prelude}\n${patched}`, loader: args.path.endsWith(".tsx") ? "tsx" : "ts", resolveDir: dirname(args.path) };
+      });
+    }
+  },
+};
+/** KaTeX lists woff2, woff and ttf for each font; browsers take the first, so only woff2 is inlined. */
+const woff2Only = {
+  name: "woff2-only",
+  setup(b) {
+    b.onResolve({ filter: /\.(woff|ttf)$/ }, (args) => ({ path: args.path, external: true }));
+  },
+};
+
+await rm(out, { recursive: true, force: true });
+await mkdir(join(out, "dist"), { recursive: true });
+await mkdir(join(skill, "references"), { recursive: true });
+await mkdir(join(skill, "scripts"), { recursive: true });
+
+// 1. The component schema the parser checks programs against, taken from the live library.
+const dump = await build({ ...common, entryPoints: [join(here, "src/schema-dump.ts")], platform: "node", format: "esm", loader: { ".css": "empty" } });
+const dumpFile = join(out, ".schema-dump.mjs");
+await writeFile(dumpFile, dump.outputFiles[0].text);
+const { schema } = await import(pathToFileURL(dumpFile).href);
+await rm(dumpFile);
+
+// 2. The validator, shared by scripts/check.mjs and the DSH openui_check tool.
+const validator = await build({
+  ...common,
+  entryPoints: [join(here, "src/validate.ts")],
+  platform: "node",
+  format: "esm",
+  define: { ...env, __OPENUI_SCHEMA__: JSON.stringify(schema) },
+  minify: !dev,
+  legalComments: "none",
+});
+await writeFile(join(skill, "scripts/validate.js"), `/* ${pkg.name} ${pkg.version}: generated by build.mjs from the LearnEV sources; do not edit. */\n${validator.outputFiles[0].text}`);
+
+// 3. Styles, scoped to the view: the library's tokens sit on :root in LearnEV and would recolor the whole DSH page.
+const styles = await build({
+  ...common,
+  entryPoints: [join(here, "src/styles.css")],
+  loader: { ".woff2": "dataurl" },
+  plugins: [woff2Only],
+  outdir: out,
+  minify: !dev,
+});
+const css = styles.outputFiles.find((f) => f.path.endsWith(".css")).text.replaceAll(":root", ".lgoui-root");
+
+// 4. Browser module in the DSH module-loader format: a factory that receives the page's require.
+const mapWorker = await readFile(join(repo, "node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs"), "utf8");
+const client = await build({
+  ...common,
+  entryPoints: [join(here, "src/client.tsx")],
+  platform: "browser",
+  format: "cjs",
+  external: PAGE_MODULES,
+  loader: { ".css": "empty" },
+  define: { ...env, __LEARNEV_OPENUI_CSS__: JSON.stringify(css), __LEARNEV_MAP_WORKER__: JSON.stringify(mapWorker) },
+  plugins: [patchSources],
+  minify: !dev,
+  legalComments: "none",
+});
+const body = client.outputFiles[0].text;
+await writeFile(
+  join(out, "dist/client.js"),
+  `/* ${pkg.name} ${pkg.version}: generated by build.mjs from the LearnEV sources; do not edit. */
+window.__ModuleLoader__.load({
+  id: ${JSON.stringify(pkg.name)},
+  factory(require) {
+    var module = { exports: {} }, exports = module.exports, process = { env: { NODE_ENV: "production" } };
+${body}
+    var plugin = module.exports;
+    return { name: plugin.name, inject: plugin.inject, apply: plugin.apply };
+  },
+});
+`,
+);
+
+// 5. The plugin files, the skill and its reference material.
+await cp(join(here, "package"), out, { recursive: true });
+await cp(join(here, "skill"), skill, { recursive: true });
+await copyFile(join(repo, "src/openui/system-prompt.txt"), join(skill, "references/openui-language.md"));
+await copyFile(join(repo, "src/openui/teaching-guide.md"), join(skill, "references/teaching-guide.md"));
+
+const sizes = await Promise.all(
+  ["dist/client.js", "skills/lev/scripts/validate.js"].map(async (f) => `${f} ${((await stat(join(out, f))).size / 1024).toFixed(0)} KiB`),
+);
+console.log(`built ${pkg.name} ${pkg.version} in ${out}: ${sizes.join(", ")}`);
+
+// 6. Release archives.
+if (pack) {
+  const tarball = execFileSync("npm", ["pack", "--silent", "--pack-destination", outRoot], { cwd: out, encoding: "utf8" }).trim().split("\n").pop();
+  const zip = `lev-skill-${pkg.version}.zip`;
+  await rm(join(outRoot, zip), { force: true });
+  execFileSync("zip", ["-qr", join(outRoot, zip), "lev"], { cwd: join(out, "skills") });
+  console.log(`packed ${join(outRoot, tarball)}\npacked ${join(outRoot, zip)}`);
+}

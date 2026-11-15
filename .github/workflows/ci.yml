@@ -1,0 +1,154 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NEXT_TELEMETRY_DISABLED: "1"
+  # GitHub's Linux runners cannot give Chrome its sandbox.
+  LEARNEV_CHROME_NO_SANDBOX: "1"
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-24.04 }
+          - { name: macOS, os: macos-15 }
+          - { name: Windows, os: windows-2025 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      # install.sh is the documented server setup: dependencies, browser, CJK fonts, build and a render self-check.
+      - name: Install, build and self-check (install.sh)
+        if: runner.os != 'Windows'
+        run: bash install.sh
+
+      - name: Install and build
+        if: runner.os == 'Windows'
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build LEV plugin
+        run: npm run build:lev
+
+      - name: Smoke test the production server
+        run: .github/scripts/smoke.sh .
+
+      - name: Upload self-check image
+        if: always() && runner.os != 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: install-check-${{ runner.os }}
+          path: .learnev/install-check.png
+          if-no-files-found: ignore
+
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Install the Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;28.2.13676358" >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Prepare the app
+        run: npm run android:prepare
+
+      - name: Smoke test the mobile runtime
+        run: node mobile/smoke.mjs
+
+      # Without a release keystore the APK is signed with this runner's debug key.
+      - name: Build the APK
+        run: |
+          (cd mobile/android && ./gradlew --no-daemon :app:assembleRelease)
+          version=$(node -p 'require("./package.json").version')
+          mkdir -p dist/release
+          cp mobile/android/app/build/outputs/apk/release/app-release.apk "dist/release/learnev-$version-android.apk"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: learnev-android
+          path: dist/release/learnev-*-android.apk
+          if-no-files-found: error
+          compression-level: 0
+
+  ios:
+    name: iOS
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Prepare the app
+        run: npm run ios:prepare
+
+      - name: Smoke test the mobile runtime
+        run: node mobile/smoke.mjs
+
+      - name: Build for the simulator
+        run: sh mobile/ios/build.sh simulator
+
+      - name: Build the unsigned IPA
+        run: sh mobile/ios/build.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: learnev-ios
+          path: dist/release/learnev-*-ios-unsigned.ipa
+          if-no-files-found: error
+          compression-level: 0

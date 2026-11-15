@@ -1,0 +1,46 @@
+{
+  "name": "learnev",
+  "version": "0.1.5",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "render": "node --experimental-strip-types --no-warnings scripts/render.ts",
+    "build:lev": "node plugins/lev/build.mjs",
+    "pack:lev": "node plugins/lev/build.mjs --pack",
+    "android:prepare": "npm run build && python3 mobile/android/prepare-native.py && node mobile/prepare-runtime.mjs android",
+    "android:apk": "npm run android:prepare && cd mobile/android && ./gradlew :app:assembleRelease",
+    "ios:prepare": "npm run build && sh mobile/ios/prepare-native.sh && node mobile/prepare-runtime.mjs ios",
+    "ios:build": "npm run ios:prepare && sh mobile/ios/build.sh",
+    "test": "node --experimental-strip-types --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@openuidev/lang-core": "1.0.0",
+    "@openuidev/react-lang": "1.0.0",
+    "katex": "0.16.47",
+    "lucide-react": "0.562.0",
+    "maplibre-gl": "6.14.0",
+    "next": "^16.4.0",
+    "proper-lockfile": "4.1.2",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "typebox": "1.3.27",
+    "zod": "^4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "esbuild": "0.25.12",
+    "typescript": "~5.9.3"
+  }
+}

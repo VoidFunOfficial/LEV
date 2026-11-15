@@ -1,0 +1,206 @@
+/* Row chrome around the view, in DSH's own tokens so it follows the app theme. */
+.lgoui-row {
+  margin: 4px 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 8%));
+  border-radius: 12px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary, inherit);
+}
+/* The reply's fence box already spaces its content among the surrounding blocks. */
+.lgoui-row[data-variant="fence"] {
+  margin: 0;
+}
+.lgoui-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, rgb(0 0 0 / 60%));
+}
+.lgoui-row:has(> .lgoui-body) > .lgoui-head,
+.lgoui-row:has(> .lgoui-source) > .lgoui-head {
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 8%));
+}
+.lgoui-tag {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, inherit);
+}
+.lgoui-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lgoui-status {
+  color: var(--dsw-alias-label-tertiary, rgb(0 0 0 / 45%));
+}
+.lgoui-actions {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: auto;
+}
+.lgoui-btn,
+.lgoui-root .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lgoui-btn:hover,
+.lgoui-root .text-button:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgb(0 0 0 / 5%));
+  color: var(--dsw-alias-label-primary, inherit);
+}
+.lgoui-btn svg {
+  flex-shrink: 0;
+}
+.lgoui-source {
+  margin: 0;
+  max-height: 320px;
+  padding: 10px 14px;
+  overflow: auto;
+  background: var(--dsw-alias-markdown-code-block, rgb(0 0 0 / 4%));
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+}
+.lgoui-row:has(> .lgoui-body) > .lgoui-source {
+  border-bottom: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 8%));
+}
+.lgoui-error {
+  color: var(--iui-danger);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+/* The view itself: LearnEV's neutrals map onto the DSH palette. */
+.lgoui-root {
+  --openui-font-body: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
+  --openui-foreground: var(--dsw-alias-bg-base, #ffffff);
+  --openui-text-neutral-primary: var(--dsw-alias-label-primary, #0d0d0d);
+  --openui-text-neutral-secondary: var(--dsw-alias-label-secondary, rgb(0 0 0 / 60%));
+  --lgoui-line: var(--dsw-alias-border-l2, rgb(0 0 0 / 8%));
+  padding: 14px 16px 16px;
+  color: var(--iui-ink);
+  font: 14px/1.45 var(--iui-font);
+  -webkit-font-smoothing: antialiased;
+}
+/* Element resets from LearnEV's page styles, at zero specificity so every .iui- rule wins. */
+:where(.lgoui-root, .lgoui-root *) {
+  box-sizing: border-box;
+}
+:where(.lgoui-root) :where(button, input, textarea, select) {
+  font: inherit;
+  color: inherit;
+}
+:where(.lgoui-root) :where(button) {
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+:where(.lgoui-root) :where(button:disabled) {
+  cursor: default;
+}
+:where(.lgoui-root) :where(input:focus, textarea:focus) {
+  outline: none;
+}
+:where(.lgoui-root) :where(code, pre, kbd) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* Pieces of LearnEV's chat styles that InteractiveAnswer uses (src/app/workspace.css). */
+.lgoui-root .interactive-answer {
+  position: relative;
+  min-width: 0;
+}
+.lgoui-root .working {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--iui-muted);
+  font-size: 13px;
+}
+.lgoui-root .view-loading {
+  display: grid;
+  gap: 9px;
+  padding: 4px 0;
+}
+.lgoui-root .view-loading span {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--iui-surface), var(--iui-hover), var(--iui-surface));
+  background-size: 200% 100%;
+  animation: lgoui-shimmer 1.4s ease-in-out infinite;
+}
+.lgoui-root .view-loading span:nth-child(1) { width: 46%; height: 18px; }
+.lgoui-root .view-loading span:nth-child(2) { width: 92%; }
+.lgoui-root .view-loading span:nth-child(3) { width: 74%; }
+@keyframes lgoui-shimmer {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+.lgoui-root .view-issue {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--lgoui-line);
+  border-radius: 10px;
+  background: var(--iui-surface);
+  color: var(--iui-muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.lgoui-root .view-issue[data-failed] {
+  border-color: color-mix(in srgb, var(--iui-danger) 35%, var(--lgoui-line));
+  background: color-mix(in srgb, var(--iui-danger) 6%, transparent);
+}
+.lgoui-root .view-issue-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.lgoui-root .view-issue-head > svg { color: var(--iui-danger); }
+.lgoui-root .view-issue-title { font-weight: 500; color: var(--iui-ink); }
+.lgoui-root .view-issue-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-left: auto;
+}
+.lgoui-root .view-issue-repair { color: var(--iui-success) !important; }
+.lgoui-root .view-issue-list {
+  margin: 6px 0 0;
+  padding-left: 22px;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11.5px;
+}
+.lgoui-root .view-issue pre {
+  margin: 8px 0 0;
+  max-height: 320px;
+  padding: 10px 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: var(--iui-surface);
+  font-size: 11.5px;
+  line-height: 1.5;
+  white-space: pre;
+}
+.lgoui-root .view-notice {
+  position: absolute;
+  right: 0;
+  bottom: -26px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--iui-ink);
+  color: var(--iui-canvas);
+  font-size: 12px;
+}

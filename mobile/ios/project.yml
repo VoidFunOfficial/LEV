@@ -1,0 +1,39 @@
+# XcodeGen spec for LearnEV.xcodeproj. After editing, regenerate the project with `xcodegen generate`.
+# The runtime folder and NodeMobile.xcframework come from `npm run ios:prepare`.
+name: LearnEV
+options:
+  bundleIdPrefix: app.learnev
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: 0.1.5
+    CURRENT_PROJECT_VERSION: 105
+targets:
+  LearnEV:
+    type: application
+    platform: iOS
+    scheme: {}
+    sources:
+      - path: LearnEV
+      - path: ../build/runtime
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - framework: build/NodeMobile.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.learnev.ios
+        PRODUCT_NAME: LearnEV
+        INFOPLIST_FILE: LearnEV/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTED_PLATFORMS: "iphoneos iphonesimulator"
+        # NodeMobile ships arm64 slices only, for devices and Apple silicon simulators.
+        "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
